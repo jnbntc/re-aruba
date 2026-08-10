@@ -1,0 +1,24 @@
+# Entornos virtuales
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+env/
+venv/
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+.idea/
+
+# Volcados de infraestructura (Backups locales)
+*.cfg
+backups/
+*.json
+*.log
+
+
+# Variables de entorno y secretos
+.env
