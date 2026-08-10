@@ -4,13 +4,13 @@
 
 `re-aruba` es un cliente API nativo en Python diseñado para automatizar operaciones de capa 2 y extraer telemetría en switches HPE/Aruba (Series 1830/1930). Este proyecto nace como una solución de ingeniería inversa para superar los *vendor lock-ins* de la segmentación de hardware.
 
-## 🧠 El Problema: Vendor Lock-in y SNMP Capado
+## El Problema: Vendor Lock-in y SNMP Capado
 
 Los fabricantes de hardware suelen aplicar restricciones de software en sus equipos *entry-level* para forzar actualizaciones hacia líneas *Enterprise*. En el caso de la serie Aruba 1830, el daemon SNMP está capado de fábrica a **SNMPv1/v2c en modo estrictamente Read-Only (RO)**.
 
 Esto imposibilita utilizar herramientas estándar de *Network Automation* para realizar mutaciones de estado (ej. un `SNMP SET` para cambiar el `sysLocation`, apagar un puerto ante un loop, o modificar VLANs dinámicamente). 
 
-## 🛠️ La Investigación (Reverse Engineering)
+## La Investigación (Reverse Engineering)
 
 Analizando el tráfico de red, los volcados de memoria y la arquitectura del frontend web (una Single Page Application), descubrimos cómo opera el firmware cerrado (Broadcom/RapidControl) subyacente:
 
@@ -18,7 +18,7 @@ Analizando el tráfico de red, los volcados de memoria y la arquitectura del fro
 2. **Autenticación Asimétrica en Frontend:** El login cifra las credenciales vía RSA interceptando el POST en JavaScript. `re-aruba` explota una vulnerabilidad lógica en el controlador de sesión (`system.xml?action=login`) para forzar un *fallback* de validación, bypasseando la necesidad de gestionar certificados.
 3. **Tablas Virtuales XML (WCD):** El backend almacena la base de datos de red en Tablas Virtuales. Al carecer de acceso SNMP de escritura, interactuamos directamente con el demonio C (`wcd`) inyectando payloads XML crudos (`<SystemGlobalSetting action="set">`), logrando modificar el estado del switch directamente en la NVRAM.
 
-## 🚀 Uso e Implementación de IaC
+## Uso e Implementación de IaC
 
 Este wrapper permite integrar hardware capado a pipelines de *Infrastructure as Code* (IaC) y Agentes de IA.
 
@@ -43,7 +43,7 @@ python3 main_example.py
 *   `query_virtual_tables()`: Extracción profunda del estado del kernel de red en formato JSON para telemetría forense.
 *   `backup_cli_config()`: Llamada a la subrutina interna de Broadcom para generar un *running-config* tradicional ideal para integraciones con repositorios Git (NSoT).
 
-## 🛡️ Disclaimer
+## Disclaimer
 Este proyecto fue desarrollado mediante auditoría *Black-Box* sobre hardware de mi propiedad. Se comparte con fines exclusivamente educativos y para la investigación en automatización de redes (*Network Automation*).
 
 ---
@@ -53,13 +53,13 @@ Este proyecto fue desarrollado mediante auditoría *Black-Box* sobre hardware de
 
 `re-aruba` is a native Python API client designed to automate Layer 2 operations and extract telemetry from HPE/Aruba switches (1830/1930 Series). This project was born as a reverse engineering solution to overcome hardware segmentation *vendor lock-ins*.
 
-## 🧠 The Problem: Vendor Lock-in and Capped SNMP
+## The Problem: Vendor Lock-in and Capped SNMP
 
 Hardware manufacturers often apply software restrictions to their *entry-level* devices to force upgrades to *Enterprise* lines. In the case of the Aruba 1830 series, the SNMP daemon is factory-capped to **SNMPv1/v2c in strict Read-Only (RO) mode**.
 
 This makes it impossible to use standard *Network Automation* tools to perform state mutations (e.g., an `SNMP SET` to change the `sysLocation`, shut down a looped port, or dynamically modify VLANs).
 
-## 🛠️ The Research (Reverse Engineering)
+## The Research (Reverse Engineering)
 
 By analyzing network traffic, memory dumps, and the web frontend architecture (a Single Page Application), we discovered how the underlying closed firmware (Broadcom/RapidControl) operates:
 
@@ -67,7 +67,7 @@ By analyzing network traffic, memory dumps, and the web frontend architecture (a
 2. **Asymmetric Frontend Authentication:** The login mechanism encrypts credentials via RSA by intercepting the POST request in JavaScript. `re-aruba` exploits a logical vulnerability in the session controller (`system.xml?action=login`) to force a validation *fallback*, bypassing the need for certificate management.
 3. **XML Virtual Tables (WCD):** The backend stores the network database in Virtual Tables. Lacking write access via SNMP, we interact directly with the C daemon (`wcd`) by injecting raw XML payloads (`<SystemGlobalSetting action="set">`), successfully modifying the switch state directly in NVRAM.
 
-## 🚀 Usage and IaC Implementation
+## Usage and IaC Implementation
 
 This wrapper allows integrating capped hardware into *Infrastructure as Code* (IaC) pipelines and AI Agents.
 
@@ -92,5 +92,5 @@ python3 main_example.py
 *   `query_virtual_tables()`: Deep extraction of the network kernel state in JSON format for forensic telemetry.
 *   `backup_cli_config()`: Call to the internal Broadcom subroutine to generate a traditional *running-config*, ideal for Git repository integrations (NSoT).
 
-## 🛡️ Disclaimer
+## Disclaimer
 This project was developed through a *Black-Box* audit on hardware I own. It is shared exclusively for educational purposes and research in *Network Automation*.
