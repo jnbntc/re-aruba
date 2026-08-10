@@ -34,7 +34,7 @@ echo "SWITCH_USER=admin" >> .env
 echo "SWITCH_PASS=supersecret" >> .env
 
 # 3. Ejecutar
-python3 main_example.py
+python3 main.py
 ```
 
 ### Capacidades del API Client:
@@ -83,7 +83,7 @@ echo "SWITCH_USER=admin" >> .env
 echo "SWITCH_PASS=supersecret" >> .env
 
 # 3. Execute
-python3 main_example.py
+python3 main.py
 ```
 
 ### API Client Capabilities:
