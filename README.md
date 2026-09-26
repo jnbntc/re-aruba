@@ -1,96 +1,268 @@
-# re-aruba: Aruba Instant On API Wrapper & Reverse Engineering
+# re-aruba — reverse-engineered management client for Aruba Instant On switches
 
-[🇬🇧 Read in English](#english-version)
+> Cliente experimental en Python para interactuar con endpoints de gestión no documentados observados en switches **HPE/Aruba Instant On 1830**.
 
-`re-aruba` es un cliente API nativo en Python diseñado para automatizar operaciones de capa 2 y extraer telemetría en switches HPE/Aruba (Series 1830/1930). Este proyecto nace como una solución de ingeniería inversa para superar los *vendor lock-ins* de la segmentación de hardware.
+[🇬🇧 English version](#english-version)
 
-## El Problema: Vendor Lock-in y SNMP Capado
+`re-aruba` nació de una limitación muy concreta: en la serie 1830 probada, SNMP está disponible para lectura pero no ofrece una vía estándar de escritura para automatizar cambios de estado.
 
-Los fabricantes de hardware suelen aplicar restricciones de software en sus equipos *entry-level* para forzar actualizaciones hacia líneas *Enterprise*. En el caso de la serie Aruba 1830, el daemon SNMP está capado de fábrica a **SNMPv1/v2c en modo estrictamente Read-Only (RO)**.
+En lugar de intentar convertir SNMP en algo que no es, el proyecto reproduce parte del flujo que utiliza la propia interfaz web del switch: descubre el identificador de sesión embebido en la URI, autentica con credenciales válidas y habla directamente con endpoints internos de gestión para consultar tablas y enviar cambios mediante XML.
 
-Esto imposibilita utilizar herramientas estándar de *Network Automation* para realizar mutaciones de estado (ej. un `SNMP SET` para cambiar el `sysLocation`, apagar un puerto ante un loop, o modificar VLANs dinámicamente). 
+Este repositorio documenta ese trabajo de ingeniería inversa y contiene un **proof of concept funcional**, no una API oficial de Aruba/HPE.
 
-## La Investigación (Reverse Engineering)
+## Qué problema resuelve
 
-Analizando el tráfico de red, los volcados de memoria y la arquitectura del frontend web (una Single Page Application), descubrimos cómo opera el firmware cerrado (Broadcom/RapidControl) subyacente:
+En el hardware probado, SNMP v1/v2c permite obtener telemetría, pero no realizar operaciones de escritura equivalentes a `SNMP SET`. Eso limita la automatización cuando se necesita, por ejemplo:
 
-1. **Sesiones Basadas en URI:** El servidor embebido (GoAhead) no utiliza Cookies estándar, sino seguimiento dinámico inyectado en las cabeceras `Location` (ej. `/csbecf22fa/`), previniendo el uso de clientes HTTP convencionales.
-2. **Autenticación Asimétrica en Frontend:** El login cifra las credenciales vía RSA interceptando el POST en JavaScript. `re-aruba` explota una vulnerabilidad lógica en el controlador de sesión (`system.xml?action=login`) para forzar un *fallback* de validación, bypasseando la necesidad de gestionar certificados.
-3. **Tablas Virtuales XML (WCD):** El backend almacena la base de datos de red en Tablas Virtuales. Al carecer de acceso SNMP de escritura, interactuamos directamente con el demonio C (`wcd`) inyectando payloads XML crudos (`<SystemGlobalSetting action="set">`), logrando modificar el estado del switch directamente en la NVRAM.
+- actualizar metadatos del sistema;
+- consultar estructuras internas que no aparecen cómodamente por SNMP;
+- obtener una copia de la configuración para versionado;
+- integrar equipos de gama de entrada en workflows de automatización existentes.
 
-## Uso e Implementación de IaC
+`re-aruba` utiliza los mismos mecanismos HTTP/XML observados en la administración web para cubrir parte de ese espacio.
 
-Este wrapper permite integrar hardware capado a pipelines de *Infrastructure as Code* (IaC) y Agentes de IA.
+## Qué encontramos durante el reverse engineering
+
+### 1. Session tracking embebido en la URI
+
+El servidor web del switch puede redirigir a una ruta dinámica similar a:
+
+```text
+/csbecf22fa/
+```
+
+El cliente captura ese prefijo desde la cabecera `Location` y lo reutiliza en las llamadas posteriores.
+
+Esto no impide utilizar un cliente HTTP convencional: simplemente requiere reproducir el mecanismo de seguimiento que espera el firmware.
+
+### 2. El RSA pertenece al frontend, no a la autorización
+
+La SPA utiliza JavaScript/RSA para proteger el envío de credenciales desde el navegador. Durante la investigación encontramos que el controlador de login también acepta una ruta alternativa que puede invocarse directamente desde un cliente HTTP.
+
+`re-aruba` usa esa ruta con **credenciales válidas**.
+
+Por lo tanto, el proyecto **no evade la autenticación ni obtiene acceso sin credenciales**. Lo que evita es la capa RSA implementada por el frontend para poder automatizar el mismo login desde Python.
+
+### 3. Endpoints internos y tablas virtuales
+
+Una vez autenticado, el firmware expone estructuras internas mediante el endpoint `/wcd`. El cliente puede consultar tablas y convertir las respuestas XML a estructuras Python/JSON.
+
+También se comprobó que determinados cambios pueden enviarse como XML con `action="set"`, evitando depender de una vía SNMP de escritura inexistente en el equipo probado.
+
+El código valida la respuesta del firmware, pero no pretende demostrar por sí solo cómo cada versión concreta persiste internamente esos cambios. Por ese motivo hablamos de **cambios de estado mediante el backend de gestión**, no de escritura directa al kernel o a NVRAM como propiedad garantizada.
+
+## Estado real de la implementación
+
+| Capacidad | Estado | Implementación |
+| --- | --- | --- |
+| Descubrimiento del prefijo de sesión `/cs...` | ✅ Implementado | `_capture_session_token()` |
+| Login sin reproducir el RSA del navegador | ✅ Implementado | `authenticate()` |
+| Autenticación sin credenciales | ❌ No | Se requieren usuario y contraseña válidos |
+| Consulta de tablas internas | ✅ Implementado | `query_virtual_tables()` |
+| Cambio de nombre/ubicación/contacto | ✅ Implementado | `set_system_state()` |
+| Exportación de tablas a JSON | ✅ Implementado | `backup_virtual_tables_json()` |
+| Descarga de configuración vía endpoint interno | ✅ Implementado | `backup_cli_config()` |
+| Motor declarativo/idempotente de IaC | ❌ No | El cliente puede integrarse en pipelines IaC, pero no los reemplaza |
+| Soporte Aruba Instant On 1830 | ✅ Objetivo probado | Base del desarrollo |
+| Soporte Aruba Instant On 1930 | ⚠️ No verificado | Puede compartir componentes de firmware, pero requiere validación específica |
+
+## Arquitectura
+
+```text
+main.py
+  │
+  ├── core/api.py
+  │     ├── sesión HTTP
+  │     ├── descubrimiento /cs...
+  │     ├── autenticación
+  │     ├── consultas /wcd
+  │     └── cambios XML
+  │
+  └── core/backup.py
+        ├── exportación de tablas a JSON
+        └── descarga de configuración
+```
+
+## Instalación
 
 ```bash
-# 1. Crear entorno aislado e instalar dependencias
+git clone https://github.com/jnbntc/re-aruba.git
+cd re-aruba
+
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+```
 
-# 2. Configurar el inventario seguro
-echo "SWITCH_HOST=192.168.1.10" > .env
-echo "SWITCH_USER=admin" >> .env
-echo "SWITCH_PASS=supersecret" >> .env
+Crear un archivo `.env`:
 
-# 3. Ejecutar
+```dotenv
+SWITCH_HOST=192.168.1.10
+SWITCH_USER=admin
+SWITCH_PASS=change-me
+```
+
+Luego:
+
+```bash
 python3 main.py
 ```
 
-### Capacidades del API Client:
-*   `authenticate()`: Inicia sesión mediante manipulación del URI y *fallback login*.
-*   `set_system_state()`: Mutación de NVRAM para variables del sistema bypasseando el bloqueo SNMP RO.
-*   `query_virtual_tables()`: Extracción profunda del estado del kernel de red en formato JSON para telemetría forense.
-*   `backup_cli_config()`: Llamada a la subrutina interna de Broadcom para generar un *running-config* tradicional ideal para integraciones con repositorios Git (NSoT).
+> **Importante:** el flujo observado en el firmware utiliza HTTP y el cliente reproduce endpoints internos no documentados. Utilizalo únicamente en una red de gestión confiable y sobre equipos que administrás.
 
-## Disclaimer
-Este proyecto fue desarrollado mediante auditoría *Black-Box* sobre hardware de mi propiedad. Se comparte con fines exclusivamente educativos y para la investigación en automatización de redes (*Network Automation*).
+## Uso como librería
+
+```python
+from core.api import ArubaRapidControlAPI
+
+switch = ArubaRapidControlAPI(
+    host="192.168.1.10",
+    username="admin",
+    password="change-me",
+)
+
+if not switch.authenticate():
+    raise RuntimeError("Authentication failed")
+
+state = switch.query_virtual_tables([
+    "SystemGlobalSetting",
+])
+
+switch.set_system_state(
+    sys_name="FNSW-CORE",
+    sys_location="Datacenter Rack 42",
+    sys_contact="IT Ops",
+)
+```
+
+## ¿Es Infrastructure as Code?
+
+No por sí solo.
+
+`re-aruba` es una **primitiva de automatización**: ofrece acceso programático a operaciones que el dispositivo no expone mediante una API pública ni mediante SNMP de escritura.
+
+Eso permite utilizarlo desde pipelines, Ansible modules propios, inventarios versionados, jobs de backup o sistemas de reconciliación de estado. Para llamarlo IaC en sentido estricto todavía harían falta, entre otras cosas:
+
+- modelo declarativo de estado deseado;
+- idempotencia;
+- diff/plan antes de aplicar;
+- validación y rollback;
+- tests contra múltiples versiones de firmware.
+
+El objetivo del proyecto es proporcionar la capa de acceso necesaria para construir esas integraciones.
+
+## Alcance y compatibilidad
+
+El comportamiento de endpoints internos puede variar entre modelos y versiones de firmware. El código está basado en observaciones realizadas sobre hardware propio de la familia **Aruba Instant On 1830**.
+
+No se debe asumir compatibilidad automática con 1930 u otras familias sin probar:
+
+- autenticación;
+- formato y nombre de las tablas;
+- semántica de `action="set"`;
+- endpoint de descarga de configuración;
+- comportamiento tras reboot.
+
+Si probás otro modelo o firmware, un issue con los resultados —sin credenciales, configuraciones privadas ni datos sensibles— ayuda a documentar la matriz de compatibilidad.
+
+## Seguridad y disclaimer
+
+Este proyecto fue desarrollado mediante análisis black-box de hardware administrado por el autor y se publica con fines educativos, de interoperabilidad y automatización de infraestructura.
+
+No es software oficial de HPE/Aruba. Los endpoints utilizados no están documentados públicamente y pueden cambiar sin aviso.
+
+Usalo únicamente sobre dispositivos propios o para los que tengas autorización explícita.
 
 ---
 
 <a name="english-version"></a>
-# re-aruba: Aruba Instant On API Wrapper & Reverse Engineering (English)
 
-`re-aruba` is a native Python API client designed to automate Layer 2 operations and extract telemetry from HPE/Aruba switches (1830/1930 Series). This project was born as a reverse engineering solution to overcome hardware segmentation *vendor lock-ins*.
+# re-aruba — reverse-engineered management client for Aruba Instant On switches
 
-## The Problem: Vendor Lock-in and Capped SNMP
+> Experimental Python client for interacting with undocumented management endpoints observed on **HPE/Aruba Instant On 1830** switches.
 
-Hardware manufacturers often apply software restrictions to their *entry-level* devices to force upgrades to *Enterprise* lines. In the case of the Aruba 1830 series, the SNMP daemon is factory-capped to **SNMPv1/v2c in strict Read-Only (RO) mode**.
+`re-aruba` started from a concrete limitation: on the tested 1830 hardware, SNMP provides read access but no standard write path for automating state changes.
 
-This makes it impossible to use standard *Network Automation* tools to perform state mutations (e.g., an `SNMP SET` to change the `sysLocation`, shut down a looped port, or dynamically modify VLANs).
+Instead of trying to turn SNMP into something it is not, the project reproduces part of the workflow used by the switch web UI: it discovers the session identifier embedded in the URI, authenticates with valid credentials, and talks directly to internal management endpoints to query tables and submit XML changes.
 
-## The Research (Reverse Engineering)
+This repository documents that reverse-engineering work and provides a **functional proof of concept**. It is not an official Aruba/HPE API.
 
-By analyzing network traffic, memory dumps, and the web frontend architecture (a Single Page Application), we discovered how the underlying closed firmware (Broadcom/RapidControl) operates:
+## What the project actually does
 
-1. **URI-Based Sessions:** The embedded server (GoAhead) does not use standard Cookies, but rather dynamic tracking injected into the `Location` headers (e.g., `/csbecf22fa/`), preventing the use of conventional HTTP clients.
-2. **Asymmetric Frontend Authentication:** The login mechanism encrypts credentials via RSA by intercepting the POST request in JavaScript. `re-aruba` exploits a logical vulnerability in the session controller (`system.xml?action=login`) to force a validation *fallback*, bypassing the need for certificate management.
-3. **XML Virtual Tables (WCD):** The backend stores the network database in Virtual Tables. Lacking write access via SNMP, we interact directly with the C daemon (`wcd`) by injecting raw XML payloads (`<SystemGlobalSetting action="set">`), successfully modifying the switch state directly in NVRAM.
+| Capability | Status |
+| --- | --- |
+| Discover the dynamic `/cs...` session prefix | ✅ Implemented |
+| Log in without reproducing the browser-side RSA layer | ✅ Implemented |
+| Authenticate without valid credentials | ❌ No |
+| Query internal virtual tables | ✅ Implemented |
+| Change system name/location/contact | ✅ Implemented |
+| Export selected tables as JSON | ✅ Implemented |
+| Download configuration through an internal endpoint | ✅ Implemented |
+| Provide a declarative/idempotent IaC engine | ❌ No — it is a building block for IaC workflows |
+| Aruba Instant On 1830 support | ✅ Primary tested target |
+| Aruba Instant On 1930 support | ⚠️ Unverified |
 
-## Usage and IaC Implementation
+## Reverse-engineered behavior
 
-This wrapper allows integrating capped hardware into *Infrastructure as Code* (IaC) pipelines and AI Agents.
+### URI-based session tracking
+
+The embedded web server can redirect the client to a dynamic path such as `/csbecf22fa/`. The client captures that value from the `Location` header and reuses it for subsequent requests.
+
+### Browser-side RSA versus authentication
+
+The web SPA uses JavaScript/RSA around credential submission. The tested firmware also exposes a login path that can be called directly by an HTTP client.
+
+`re-aruba` invokes that path using **valid credentials**. It bypasses the browser-side RSA mechanism; it does **not** bypass authorization or provide unauthenticated access.
+
+### Internal XML management endpoints
+
+After authentication, the firmware exposes internal state through `/wcd`. The client can query selected tables and parse the returned XML into Python/JSON structures.
+
+For supported settings, the client can also submit XML using `action="set"`, providing a programmatic write path where SNMP write access is unavailable.
+
+The implementation checks the firmware response, but does not claim that every firmware version persists those writes through the same internal storage mechanism.
+
+## Installation
 
 ```bash
-# 1. Create an isolated environment and install dependencies
+git clone https://github.com/jnbntc/re-aruba.git
+cd re-aruba
+
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+```
 
-# 2. Configure secure inventory
-echo "SWITCH_HOST=192.168.1.10" > .env
-echo "SWITCH_USER=admin" >> .env
-echo "SWITCH_PASS=supersecret" >> .env
+Create `.env`:
 
-# 3. Execute
+```dotenv
+SWITCH_HOST=192.168.1.10
+SWITCH_USER=admin
+SWITCH_PASS=change-me
+```
+
+Run:
+
+```bash
 python3 main.py
 ```
 
-### API Client Capabilities:
-*   `authenticate()`: Initiates a session via URI manipulation and *fallback login*.
-*   `set_system_state()`: NVRAM mutation for system variables, bypassing the SNMP RO lock.
-*   `query_virtual_tables()`: Deep extraction of the network kernel state in JSON format for forensic telemetry.
-*   `backup_cli_config()`: Call to the internal Broadcom subroutine to generate a traditional *running-config*, ideal for Git repository integrations (NSoT).
+> **Security note:** the observed management flow uses HTTP and undocumented internal endpoints. Use this client only on a trusted management network and only against devices you are authorized to administer.
+
+## IaC positioning
+
+`re-aruba` is an **automation primitive**, not a complete Infrastructure as Code engine.
+
+It can serve as the device-access layer for pipelines, custom Ansible modules, Git-backed backups, or desired-state reconciliation systems. A strict IaC implementation would additionally need declarative state, idempotency, plan/diff, validation, rollback, and broader firmware testing.
+
+## Compatibility
+
+Development is based on black-box observations of hardware from the **Aruba Instant On 1830** family.
+
+Compatibility with 1930 or other families must be validated explicitly. Internal endpoints, table names and persistence semantics may change between models or firmware releases.
 
 ## Disclaimer
-This project was developed through a *Black-Box* audit on hardware I own. It is shared exclusively for educational purposes and research in *Network Automation*.
+
+This project was developed through black-box analysis of hardware administered by the author and is published for educational, interoperability and infrastructure-automation purposes.
+
+It is not official HPE/Aruba software. Use it only on devices you own or are explicitly authorized to manage.
