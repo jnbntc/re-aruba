@@ -1,8 +1,26 @@
 # re-aruba — reverse-engineered management client for Aruba Instant On switches
 
+<p>
+  <img src="https://img.shields.io/badge/Python-3.x-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python" />
+  <img src="https://img.shields.io/badge/Target-Aruba_Instant_On_1830-333333?style=flat-square" alt="Aruba Instant On 1830" />
+  <img src="https://img.shields.io/badge/Status-Experimental-orange?style=flat-square" alt="Experimental" />
+</p>
+
 > Cliente experimental en Python para interactuar con endpoints de gestión no documentados observados en switches **HPE/Aruba Instant On 1830**.
 
 [🇬🇧 English version](#english-version)
+
+## Resumen rápido
+
+| | |
+| --- | --- |
+| **Objetivo probado** | Aruba Instant On 1830 |
+| **Enfoque** | Ingeniería inversa black-box del flujo de gestión web |
+| **Autenticación** | Requiere credenciales válidas |
+| **Interfaz observada** | HTTP/XML y endpoints internos no documentados |
+| **Estado** | Proof of concept funcional |
+| **Posicionamiento** | Primitiva de automatización; no es un motor IaC completo |
+
 
 `re-aruba` nació de una limitación muy concreta: en la serie 1830 probada, SNMP está disponible para lectura pero no ofrece una vía estándar de escritura para automatizar cambios de estado.
 
